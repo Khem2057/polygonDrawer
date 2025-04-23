@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Magic Brush Tool</title>
+  <style>
+    canvas {
+      border: 1px solid #ccc;
+      cursor: crosshair;
+    }
+    #controls {
+      margin: 10px 0;
+    }
+  </style>
+</head>
+<body>
+  <h2>Magic Brush Tool (Live Preview)</h2>
+  <div id="controls">
+    <label>Upload Image: <input type="file" id="imageUpload"></label>
+    <label>Brush Color: <input type="color" id="brushColor" value="#ff0000"></label>
+    <label>Tolerance: <input type="range" id="tolerance" min="0" max="100" value="30"></label>
+    <label>Brush Size: <input type="range" id="brushSize" min="1" max="50" value="10"></label>
+    <label><input type="checkbox" id="freeDraw"> Enable Free Draw</label>
+    <label><input type="checkbox" id="eraser"> Eraser Tool</label>
+    <button id="downloadBtn">Download Image</button>
+  </div>
+  <canvas id="canvas" width="400" height="300"></canvas>
+  <script>
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d");
+    const brushColorPicker = document.getElementById("brushColor");
+    const toleranceInput = document.getElementById("tolerance");
+    const imageUpload = document.getElementById("imageUpload");
+    const brushSizeInput = document.getElementById("brushSize");
+    const freeDrawCheckbox = document.getElementById("freeDraw");
+    const eraserCheckbox = document.getElementById("eraser");
+    const downloadBtn = document.getElementById("downloadBtn");
+
+    let isDrawing = false;
+    const history = [];
+    let originalImageData = null;
+
+    function saveState() {
+      history.push(ctx.getImageData(0, 0, canvas.width, canvas.height));
+      if (history.length > 50) history.shift();
+    }
+
+    imageUpload.addEventListener("change", (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = function (event) {
+        const img = new Image();
+        img.onload = () => {
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          saveState();
+          originalImageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        };
+        img.src = event.target.result;
+      };
+      reader.readAsDataURL(file);
+    });
+
+    canvas.addEventListener("mousedown", (e) => {
+      if (!freeDrawCheckbox.checked) return;
+      isDrawing = true;
+      saveState();
+      draw(e);
+    });
+
+    canvas.addEventListener("mousemove", (e) => {
+      if (isDrawing && freeDrawCheckbox.checked) {
+        draw(e);
+      }
+    });
+
+    canvas.addEventListener("mouseup", () => {
+      isDrawing = false;
+    });
+
+    canvas.addEventListener("mouseleave", () => {
+      isDrawing = false;
+    });
+
+    function draw(e) {
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      const size = parseInt(brushSizeInput.value);
+
+      if (eraserCheckbox.checked && originalImageData) {
+        const imageData = ctx.getImageData(x - size / 2, y - size / 2, size, size);
+        const origData = originalImageData;
+        for (let dx = -Math.floor(size / 2); dx <= Math.floor(size / 2); dx++) {
+          for (let dy = -Math.floor(size / 2); dy <= Math.floor(size / 2); dy++) {
+            const px = Math.floor(x + dx);
+            const py = Math.floor(y + dy);
+            if (px >= 0 && px < canvas.width && py >= 0 && py < canvas.height) {
+              const index = (py * canvas.width + px) * 4;
+              const r = origData.data[index];
+              const g = origData.data[index + 1];
+              const b = origData.data[index + 2];
+              const a = origData.data[index + 3];
+              ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${a / 255})`;
+              ctx.fillRect(px, py, 1, 1);
+            }
+          }
+        }
+      } else {
+        ctx.fillStyle = brushColorPicker.value;
+        ctx.beginPath();
+        ctx.arc(x, y, size / 2, 0, 2 * Math.PI);
+        ctx.fill();
+      }
+    }
+
+    canvas.addEventListener("click", (e) => {
+      if (freeDrawCheckbox.checked) return;
+      const rect = canvas.getBoundingClientRect();
+      const x = Math.floor(e.clientX - rect.left);
+      const y = Math.floor(e.clientY - rect.top);
+
+      let imageData;
+      try {
+        imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      } catch (err) {
+        alert("Image could not be accessed due to cross-origin restrictions.");
+        return;
+      }
+
+      saveState();
+
+      const data = imageData.data;
+      const startColor = getPixel(data, x, y);
+      const fillColor = hexToRgb(brushColorPicker.value);
+      const tolerance = parseInt(toleranceInput.value);
+
+      const visited = new Set();
+      const stack = [{ x, y }];
+
+      while (stack.length) {
+        const { x, y } = stack.pop();
+        const index = (y * canvas.width + x) * 4;
+        if (visited.has(index)) continue;
+        visited.add(index);
+
+        const currentColor = [data[index], data[index + 1], data[index + 2]];
+        if (colorMatch(startColor, currentColor, tolerance)) {
+          setPixel(data, x, y, fillColor);
+          stack.push(...getNeighbors(x, y, canvas.width, canvas.height));
+        }
+      }
+
+      ctx.putImageData(imageData, 0, 0);
+    });
+
+    function getPixel(data, x, y) {
+      const index = (y * canvas.width + x) * 4;
+      return [data[index], data[index + 1], data[index + 2]];
+    }
+
+    function setPixel(data, x, y, color) {
+      const index = (y * canvas.width + x) * 4;
+      data[index] = color[0];
+      data[index + 1] = color[1];
+      data[index + 2] = color[2];
+    }
+
+    function hexToRgb(hex) {
+      const bigint = parseInt(hex.slice(1), 16);
+      return [(bigint >> 16) & 255, (bigint >> 8) & 255, bigint & 255];
+    }
+
+    function colorMatch(a, b, tolerance) {
+      return Math.sqrt(
+        (a[0] - b[0]) ** 2 +
+        (a[1] - b[1]) ** 2 +
+        (a[2] - b[2]) ** 2
+      ) <= tolerance;
+    }
+
+    function getNeighbors(x, y, width, height) {
+      const neighbors = [];
+      if (x > 0) neighbors.push({ x: x - 1, y });
+      if (x < width - 1) neighbors.push({ x: x + 1, y });
+      if (y > 0) neighbors.push({ x, y: y - 1 });
+      if (y < height - 1) neighbors.push({ x, y: y + 1 });
+      return neighbors;
+    }
+
+    downloadBtn.addEventListener("click", () => {
+      const link = document.createElement("a");
+      link.download = "magic-brush-image.png";
+      link.href = canvas.toDataURL();
+      link.click();
+    });
+
+    document.addEventListener("keydown", (e) => {
+      if (e.ctrlKey && e.key === "z" && history.length > 0) {
+        const lastState = history.pop();
+        ctx.putImageData(lastState, 0, 0);
+      }
+    });
+  </script>
+</body>
+</html>
