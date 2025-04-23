@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Magic Brush Tool</title>
+  <style>
+    canvas {
+      border: 1px solid #ccc;
+      cursor: crosshair;
+    }
+    #controls {
+      margin: 10px 0;
+    }
+  </style>
+</head>
+<body>
+  <h2>Magic Brush Tool (Live Preview)</h2>
+  <div id="controls">
+    <label>Upload Image: <input type="file" id="imageUpload"></label>
+    <label>Brush Color: <input type="color" id="brushColor" value="#ff0000"></label>
+    <label>Tolerance: <input type="range" id="tolerance" min="0" max="100" value="30"></label>
+  </div>
+  <canvas id="canvas" width="400" height="300"></canvas>
+  <script>
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d");
+    const brushColorPicker = document.getElementById("brushColor");
+    const toleranceInput = document.getElementById("tolerance");
+    const imageUpload = document.getElementById("imageUpload");
+
+    imageUpload.addEventListener("change", (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = function (event) {
+        const img = new Image();
+        img.onload = () => ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        img.src = event.target.result;
+      };
+      reader.readAsDataURL(file);
+    });
+
+    canvas.addEventListener("click", (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const x = Math.floor(e.clientX - rect.left);
+      const y = Math.floor(e.clientY - rect.top);
+
+      let imageData;
+      try {
+        imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      } catch (err) {
+        alert("Image could not be accessed due to cross-origin restrictions.");
+        return;
+      }
+
+      const data = imageData.data;
+      const startColor = getPixel(data, x, y);
+      const fillColor = hexToRgb(brushColorPicker.value);
+      const tolerance = parseInt(toleranceInput.value);
+
+      const visited = new Set();
+      const stack = [{ x, y }];
+
+      while (stack.length) {
+        const { x, y } = stack.pop();
+        const index = (y * canvas.width + x) * 4;
+        if (visited.has(index)) continue;
+        visited.add(index);
+
+        const currentColor = [data[index], data[index + 1], data[index + 2]];
+        if (colorMatch(startColor, currentColor, tolerance)) {
+          setPixel(data, x, y, fillColor);
+          stack.push(...getNeighbors(x, y, canvas.width, canvas.height));
+        }
+      }
+
+      ctx.putImageData(imageData, 0, 0);
+    });
+
+    function getPixel(data, x, y) {
+      const index = (y * canvas.width + x) * 4;
+      return [data[index], data[index + 1], data[index + 2]];
+    }
+
+    function setPixel(data, x, y, color) {
+      const index = (y * canvas.width + x) * 4;
+      data[index] = color[0];
+      data[index + 1] = color[1];
+      data[index + 2] = color[2];
+    }
+
+    function hexToRgb(hex) {
+      const bigint = parseInt(hex.slice(1), 16);
+      return [(bigint >> 16) & 255, (bigint >> 8) & 255, bigint & 255];
+    }
+
+    function colorMatch(a, b, tolerance) {
+      return Math.sqrt(
+        (a[0] - b[0]) ** 2 +
+        (a[1] - b[1]) ** 2 +
+        (a[2] - b[2]) ** 2
+      ) <= tolerance;
+    }
+
+    function getNeighbors(x, y, width, height) {
+      const neighbors = [];
+      if (x > 0) neighbors.push({ x: x - 1, y });
+      if (x < width - 1) neighbors.push({ x: x + 1, y });
+      if (y > 0) neighbors.push({ x, y: y - 1 });
+      if (y < height - 1) neighbors.push({ x, y: y + 1 });
+      return neighbors;
+    }
+  </script>
+</body>
+</html>
